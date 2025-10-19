@@ -9,7 +9,11 @@
   <property name="prever.dir" value="${build.dir}/preverified"/>
   <property name="dist.dir" value="dist"/>
   <property name="proguard.home" value="${basedir}/tools/proguard"/>
-  <property name="proguard.bin"  value="${proguard.home}/bin/proguard.bat"/>
+  <property name="proguard.ext" value=".sh"/>
+  <condition property="proguard.ext" value=".bat">
+    <os family="windows"/>
+  </condition>
+  <property name="proguard.bin" value="${proguard.home}/bin/proguard${proguard.ext}"/>
 
   <!-- Компилим строго против CLDC/MIDP-стабов -->
   <path id="bootcp">
