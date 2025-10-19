@@ -8,6 +8,8 @@
   <property name="classes.dir" value="${build.dir}/classes"/>
   <property name="prever.dir" value="${build.dir}/preverified"/>
   <property name="dist.dir" value="dist"/>
+  <property name="proguard.home" value="${basedir}/tools/proguard"/>
+  <property name="proguard.bin"  value="${proguard.home}/bin/proguard.bat"/>
 
   <!-- Компилим строго против CLDC/MIDP-стабов -->
   <path id="bootcp">
@@ -35,7 +37,7 @@
 
   <!-- Preverify через ProGuard (установлен brew'ом) -->
   <target name="preverify" depends="compile">
-    <exec executable="proguard">
+    <exec executable="${proguard.bin}" failonerror="true">
       <arg value="@proguard.pro"/>
     </exec>
   </target>
