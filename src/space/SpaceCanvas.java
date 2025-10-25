@@ -16,6 +16,21 @@ import javax.microedition.lcdui.game.Sprite;
  */
 public class SpaceCanvas extends GameCanvas implements Runnable {
 
+    // ===== Состояния =====
+    private static final int S_SPLASH = 0, S_TITLE = 1, S_PLAY = 2, S_ABOUT = 3, S_GAMEOVER = 4;
+    private int state = S_SPLASH;
+    private int keysPrev = 0;          // для edge-триггеров
+
+    // SPLASH
+    private Image splashImg;
+    private int splashTicks = 0;
+    private static final int SPLASH_DURATION = 75; // ≈3 сек при 40 мс/тик
+
+    // TITLE
+    private int menuSel = 0;           // 0=Start, 1=About
+    private int titleBlink = 0;
+    private Image titleLogo;           // опционально (не обязательно)
+
     // ---------- цикл ----------
     private Thread loop;
     private boolean running = false, paused = false, gameOver = false;
@@ -72,7 +87,7 @@ public class SpaceCanvas extends GameCanvas implements Runnable {
     // ---------- корабль ----------
     private int shipX, shipY;
     private final int shipW = 31, shipH = 48;
-    private final int shipSpeed;
+    private int shipSpeed;
     private Sprite ship;
     private int shipAnimTick = 0;
     private final int shipAnimDelay = 5;
@@ -113,12 +128,14 @@ public class SpaceCanvas extends GameCanvas implements Runnable {
 
         loadSprites();
 
-        shipX = W / 2;
-        shipY = groundY - shipH/2 - 2;
-        shipSpeed = Math.max(2, cell / 3);
-        if (ship != null) ship.setRefPixelPosition(shipX, shipY);
+//        shipX = W / 2;
+//        shipY = groundY - shipH/2 - 2;
+//        shipSpeed = Math.max(2, cell / 3);
+//        if (ship != null) ship.setRefPixelPosition(shipX, shipY);
 
         initStars();
+
+        state = S_SPLASH;
     }
 
     private void loadSprites() {
@@ -142,6 +159,14 @@ public class SpaceCanvas extends GameCanvas implements Runnable {
 
             // звезда-хилка
             starSheet = Image.createImage("/img/stars_sprite_16x16.png"); // 11 кадров
+            splashImg = Image.createImage("/img/splash.png");       // 240×320 (или любой)
+            try { titleLogo = Image.createImage("/img/title.png"); } catch (Exception ignored) { titleLogo = null; }
+
+            // позиция корабля
+            shipX = W / 2;
+            shipY = groundY - shipH/2 - 2;
+            shipSpeed = Math.max(2, cell / 3);
+            if (ship != null) ship.setRefPixelPosition(shipX, shipY);
         } catch (Exception e) {
             System.err.println("Error loading sprites");
             ship = null;
@@ -175,13 +200,24 @@ public class SpaceCanvas extends GameCanvas implements Runnable {
             long t0 = System.currentTimeMillis();
             if (!paused) {
                 input();
-                if (!gameOver) {
+                if (state == S_PLAY) {
                     updateStars();
                     updateBullets();
                     spawnAsteroids();
                     updateAsteroids();
                     updatePowerups();
                     checkCollisions();
+                } else {
+                    // на заставке/титуле/about/gameover — крутим только фон для живости
+                    updateStars();
+
+                    // авто-переход со сплэша на тайтл
+                    if (state == S_SPLASH) {
+                        if (++splashTicks >= SPLASH_DURATION) {
+                            splashTicks = 0;
+                            state = S_TITLE;
+                        }
+                    }
                 }
                 draw();
             }
@@ -194,13 +230,57 @@ public class SpaceCanvas extends GameCanvas implements Runnable {
     // ---------- ввод ----------
     private void input() {
         int ks = getKeyStates();
+        int press = ks & ~keysPrev;   // новые нажатия
+        keysPrev = ks;
+
+        // --- SPLASH ---
+        if (state == S_SPLASH) {
+            if ((press & (FIRE_PRESSED | LEFT_PRESSED | RIGHT_PRESSED | UP_PRESSED | DOWN_PRESSED)) != 0) {
+                splashTicks = 0;
+                state = S_TITLE;
+            }
+            return;
+        }
+
+        // --- TITLE ---
+        if (state == S_TITLE) {
+            if ((press & (UP_PRESSED | LEFT_PRESSED)) != 0)  menuSel = (menuSel + 1) & 1;
+            if ((press & (DOWN_PRESSED | RIGHT_PRESSED)) != 0) menuSel = (menuSel + 1) & 1;
+            if ((press & FIRE_PRESSED) != 0) {
+                if (menuSel == 0) {
+                    resetGame();
+                    state = S_PLAY;
+                    keysPrev = getKeyStates();
+                    shootCooldown = 8;
+                } else {
+                    state = S_ABOUT;
+                }
+            }
+            return;
+        }
+
+        // --- ABOUT ---
+        if (state == S_ABOUT) {
+            if ((press & FIRE_PRESSED) != 0 || (press & LEFT_PRESSED) != 0) {
+                state = S_TITLE;
+            }
+            return;
+        }
+
+        // --- GAMEOVER ---
+        if (state == S_GAMEOVER) {
+            if ((press & FIRE_PRESSED) != 0) {
+                resetGame();
+                state = S_TITLE;   // вместо S_PLAY
+            } else if ((press & LEFT_PRESSED) != 0) {
+                resetGame();
+                state = S_TITLE;
+            }
+            return;
+        }
 
         if (shipExploding) return; // ждём окончания взрыва
 
-        if (gameOver) {
-            if ((ks & FIRE_PRESSED) != 0) resetGame();
-            return;
-        }
 
         if ((ks & LEFT_PRESSED)  != 0) shipX -= shipSpeed;
         if ((ks & RIGHT_PRESSED) != 0) shipX += shipSpeed;
@@ -210,7 +290,7 @@ public class SpaceCanvas extends GameCanvas implements Runnable {
         if (ship != null) ship.setRefPixelPosition(shipX, shipY);
 
         if (shootCooldown > 0) shootCooldown--;
-        if ((ks & FIRE_PRESSED) != 0 && shootCooldown == 0) {
+        if ((press & FIRE_PRESSED) != 0 && shootCooldown == 0 && !shipExploding) {
             fireBullet();
             shootCooldown = 6;
         }
@@ -377,6 +457,7 @@ public class SpaceCanvas extends GameCanvas implements Runnable {
                     shipExploding = false;
                     shipExp = null;
                     gameOver = true;
+                    state = S_GAMEOVER;
                 } else {
                     shipExp.setFrame(nf);
                     shipExp.setRefPixelPosition(shipX, shipY);
@@ -437,6 +518,7 @@ public class SpaceCanvas extends GameCanvas implements Runnable {
             shipExp = null;
             shipExploding = false;
             gameOver = true;
+            state = S_GAMEOVER;
         }
     }
 
@@ -580,6 +662,26 @@ public class SpaceCanvas extends GameCanvas implements Runnable {
             g.setColor(c); g.fillRect(sx[i], sy[i], 1, 1);
         }
 
+        // экраны
+        if (state == S_SPLASH) { drawSplash(g); flushGraphics(); return; }
+        if (state == S_TITLE)  { drawTitle(g);  flushGraphics(); return; }
+        if (state == S_ABOUT)  { drawAbout(g);  flushGraphics(); return; }
+
+        if (state == S_GAMEOVER) {
+            // простой экран GAME OVER без корабля/пуль
+            g.setColor(0x444444); g.drawRect(0, 0, W-1, H-1);
+            g.setColor(0xFFFFFF);
+            String a = "GAME OVER";
+            String b = "FIRE: title";
+            int lh = g.getFont().getHeight();
+            int w1 = g.getFont().stringWidth(a);
+            int w2 = g.getFont().stringWidth(b);
+            g.drawString(a, W/2 - w1/2, H/2 - lh, Graphics.TOP | Graphics.LEFT);
+            g.drawString(b, W/2 - w2/2, H/2 + 2, Graphics.TOP | Graphics.LEFT);
+            flushGraphics();
+            return;
+        }
+
         // рамка
         g.setColor(0x444444); g.drawRect(0, 0, W-1, H-1);
 
@@ -631,9 +733,9 @@ public class SpaceCanvas extends GameCanvas implements Runnable {
         if (fillW > 2) g.fillRect(x0+1, y0+1, fillW-2, barH-2);
 
         // Game Over (после взрыва корабля)
-        if (gameOver) {
+        if (state == S_GAMEOVER) {
             String a = "GAME OVER";
-            String b = "FIRE: restart";
+            String b = "FIRE: restart   LEFT: title";
             int lh = g.getFont().getHeight();
             int w1 = g.getFont().stringWidth(a);
             int w2 = g.getFont().stringWidth(b);
@@ -641,6 +743,81 @@ public class SpaceCanvas extends GameCanvas implements Runnable {
             g.drawString(b, W/2 - w2/2, H/2 + 2, Graphics.TOP | Graphics.LEFT);
         }
 
+
         flushGraphics();
+    }
+
+    // ===== экраны =====
+    private void drawSplash(Graphics g) {
+        if (splashImg != null) {
+            // центрируем splash.png
+            int x = (W - splashImg.getWidth())/2;
+            int y = (H - splashImg.getHeight())/2;
+            g.drawImage(splashImg, x, y, Graphics.TOP | Graphics.LEFT);
+        } else {
+            // запасной вариант: текст
+            g.setColor(0xFFD24A);
+            String t = "SPACE ASTEROIDS";
+            int w = g.getFont().stringWidth(t);
+            g.drawString(t, W/2 - w/2, H/3, Graphics.TOP | Graphics.LEFT);
+            g.setColor(0xAAAAAA);
+            String s = "FIRE to continue";
+            int w2 = g.getFont().stringWidth(s);
+            g.drawString(s, W/2 - w2/2, H - g.getFont().getHeight() - 6, Graphics.TOP | Graphics.LEFT);
+        }
+    }
+
+    private void drawTitle(Graphics g) {
+        // логотип / название
+        if (titleLogo != null) {
+            g.drawImage(titleLogo, W/2, H/3, Graphics.HCENTER | Graphics.VCENTER);
+        } else {
+            g.setColor(0xFFD24A);
+            String t = "SPACE ASTEROIDS";
+            int w = g.getFont().stringWidth(t);
+            g.drawString(t, W/2 - w/2, H/3 - g.getFont().getHeight()/2, Graphics.TOP | Graphics.LEFT);
+        }
+
+        // меню
+        String[] items = {"START", "ABOUT"};
+        int y0 = H/2 + 10;
+        for (int i = 0; i < items.length; i++) {
+            boolean sel = (i == menuSel);
+            g.setColor(sel ? 0xFFFFFF : 0xAAAAAA);
+            int w = g.getFont().stringWidth(items[i]);
+            g.drawString(items[i], W/2 - w/2, y0 + i*(g.getFont().getHeight()+4), Graphics.TOP | Graphics.LEFT);
+            if (sel) {
+                // ▸ маркер
+                g.fillTriangle(W/2 - w/2 - 10, y0 + i*(g.getFont().getHeight()+4) + 5,
+                        W/2 - w/2 - 4,  y0 + i*(g.getFont().getHeight()+4) + 9,
+                        W/2 - w/2 - 10, y0 + i*(g.getFont().getHeight()+4) + 13);
+            }
+        }
+
+        // подсказка
+        if (((titleBlink++/20) & 1) == 0) {
+            g.setColor(0x808080);
+            String tip = "FIRE to select";
+            int w = g.getFont().stringWidth(tip);
+            g.drawString(tip, W/2 - w/2, H - g.getFont().getHeight() - 4, Graphics.TOP | Graphics.LEFT);
+        }
+    }
+
+    private void drawAbout(Graphics g) {
+        g.setColor(0xFFFFFF);
+        int y = H/4;
+        String a1 = "SPACE ASTEROIDS";
+        String a2 = "by openm1ke";
+        String a3 = "2025  v1.0";
+        String a4 = "FIRE: back";
+
+        int w1 = g.getFont().stringWidth(a1);
+        g.drawString(a1, W/2 - w1/2, y, Graphics.TOP | Graphics.LEFT); y += g.getFont().getHeight()+6;
+        g.drawString(a2, 8, y, Graphics.TOP | Graphics.LEFT); y += g.getFont().getHeight()+2;
+        g.drawString(a3, 8, y, Graphics.TOP | Graphics.LEFT); y += g.getFont().getHeight()+12;
+
+        int w4 = g.getFont().stringWidth(a4);
+        g.setColor(0xAAAAAA);
+        g.drawString(a4, W/2 - w4/2, H - g.getFont().getHeight() - 4, Graphics.TOP | Graphics.LEFT);
     }
 }
