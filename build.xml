@@ -104,5 +104,14 @@ MIDlet-Jar-Size: ${jar.size}
             <arg value="${dist.dir}/${suite.name}.jar"/>
         </java>
     </target>
+
+  <target name="run-freej2me" depends="package">
+    <java jar="tools/freej2me.jar" fork="true">
+      <arg value="${dist.dir}/${suite.name}.jar"/>
+      <arg value="240"/>
+      <arg value="320"/>
+      <arg value="2"/>
+    </java>
+  </target>
 </project>
 
